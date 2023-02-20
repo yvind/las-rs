@@ -13,6 +13,7 @@
 //! scale and offset from the header are applied.
 
 mod classification;
+pub mod extra_bytes;
 mod format;
 mod scan_direction;
 
