@@ -349,17 +349,28 @@ impl CopcHierarchyVlr {
     /// Reads the CopcHierarchyVlr from the Vlr payload with specifications from copc_info.
     pub fn read_from_with(vlr: &Vlr, copc_info: &CopcInfoVlr) -> Result<CopcHierarchyVlr> {
         let read_page = |offset: u64, byte_size: u64| {
-            let start = offset
+            let start: usize = offset
                 .checked_sub(copc_info.root_hier_offset)
-                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid COPC page"))?;
-            let start = usize::try_from(start)?;
+                .ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "invalid COPC page: Root page should be the first Page in the Copc Hierarchy EVLR",
+                    )
+                })?.try_into()?;
             let end = start
                 .checked_add(usize::try_from(byte_size)?)
-                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid COPC page"))?;
-            let data = vlr
-                .data
-                .get(start..end)
-                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid COPC page"))?;
+                .ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "invalid COPC page: Page end address overflows usize",
+                    )
+                })?;
+            let data = vlr.data.get(start..end).ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "invalid COPC page: Page is longer than the Copc Hierarchy EVLR",
+                )
+            })?;
             Page::read_from(data)
         };
         let root = read_page(copc_info.root_hier_offset, copc_info.root_hier_size)?;
@@ -508,19 +519,19 @@ impl Header {
     /// Retrieves the COPC hierarchy EVLR (Extended Variable Length Record) if available.
     ///
     /// This function searches through the available EVLRs to find the COPC hierarchy EVLR,
-    /// and then attempts  to parse it using the COPC info VLR.
+    /// and then attempts to parse it using the COPC info VLR.
     ///
     /// # Returns
     ///
-    /// * `Some(CopcHierarchyVlr)` - If the COPC hierarchy EVLR exists and can be successfully parsed
-    /// * `None` - If the COPC info VLR doesn't exist, the COPC hierarchy EVLR doesn't exist,
-    ///   or if there was an error parsing the COPC hierarchy EVLRto parse it using the CopcInfoVlr.
-    pub fn copc_hierarchy_evlr(&self) -> Option<CopcHierarchyVlr> {
+    /// * `Some(Ok(CopcHierarchyVlr))` - If the COPC hierarchy EVLR exists and is successfully parsed
+    /// * `Some(Err(Error))` - If the COPC hierarchy EVLR exists, but parsing fails
+    /// * `None` - If the COPC info VLR doesn't exist or the COPC hierarchy EVLR doesn't exist,
+    pub fn copc_hierarchy_evlr(&self) -> Option<Result<CopcHierarchyVlr>> {
         let copc_info = self.copc_info_vlr()?;
         self.evlrs()
             .iter()
             .find(|vlr| vlr.is_copc_hierarchy())
-            .and_then(|vlr| CopcHierarchyVlr::read_from_with(vlr, &copc_info).ok())
+            .map(|vlr| CopcHierarchyVlr::read_from_with(vlr, &copc_info))
     }
 }
 
@@ -584,7 +595,7 @@ impl<R: Read + Seek> CopcReader<'_, R> {
         let copc_info = header.copc_info_vlr().ok_or(Error::CopcInfoVlrNotFound)?;
         let hierarchy = header
             .copc_hierarchy_evlr()
-            .ok_or(Error::CopcHierarchyEvlrNotFound)?;
+            .ok_or(Error::CopcHierarchyEvlrNotFound)??;
         let hierarchy = hierarchy.iter_entries().collect::<Result<Vec<_>>>()?;
         let hierarchy = hierarchy
             .into_iter()
@@ -830,7 +841,7 @@ mod tests {
     fn test_vlr_copc_autzen() {
         let reader = Reader::from_path("tests/data/autzen.copc.laz").expect("Cannot open reader");
         let copcinfo = reader.header().copc_info_vlr().unwrap();
-        let copchier = reader.header().copc_hierarchy_evlr().unwrap();
+        let copchier = reader.header().copc_hierarchy_evlr().unwrap().unwrap();
         assert!(copcinfo.root_hier_offset == 4336);
         assert!(copcinfo.root_hier_size == 32);
         assert!(copchier.root.entries[0].key == VoxelKey::ROOT);
