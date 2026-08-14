@@ -486,13 +486,15 @@ impl Header {
     ///
     /// # Returns
     ///
-    /// * `Some(CopcInfolr)` - If the COPC Info VLR exists and can be successfully parsed
-    /// * `None` - If the COPC Info VLR doesn't exist or if there was an error parsing it.
-    pub fn copc_info_vlr(&self) -> Option<CopcInfoVlr> {
+    /// * `Ok(Some(CopcInfoVlr))` - If the COPC Info VLR exists and can be successfully parsed
+    /// * `Ok(None)` - If the COPC Info VLR doesn't exist.
+    /// * `Err(crate::Error)` - If the COPC Info VLR exists, but parsing failed
+    pub fn copc_info_vlr(&self) -> Result<Option<CopcInfoVlr>> {
         self.vlrs
             .iter()
             .find(|vlr| vlr.is_copc_info())
-            .and_then(|vlr| vlr.try_into().ok())
+            .map(|vlr| vlr.try_into())
+            .transpose()
     }
 }
 
@@ -523,15 +525,18 @@ impl Header {
     ///
     /// # Returns
     ///
-    /// * `Some(Ok(CopcHierarchyVlr))` - If the COPC hierarchy EVLR exists and is successfully parsed
-    /// * `Some(Err(Error))` - If the COPC hierarchy EVLR exists, but parsing fails
-    /// * `None` - If the COPC info VLR doesn't exist or the COPC hierarchy EVLR doesn't exist,
-    pub fn copc_hierarchy_evlr(&self) -> Option<Result<CopcHierarchyVlr>> {
-        let copc_info = self.copc_info_vlr()?;
+    /// * `Ok(Some(CopcHierarchyVlr))` - If the COPC hierarchy EVLR exists and is successfully parsed
+    /// * `Ok(None)` - If the COPC info VLR doesn't exist or the COPC hierarchy EVLR doesn't exist,
+    /// * `Err(Error)` - If the COPC hierarchy EVLR exists, but parsing fails
+    pub fn copc_hierarchy_evlr(&self) -> Result<Option<CopcHierarchyVlr>> {
+        let Some(copc_info) = self.copc_info_vlr()? else {
+            return Ok(None);
+        };
         self.evlrs()
             .iter()
             .find(|vlr| vlr.is_copc_hierarchy())
             .map(|vlr| CopcHierarchyVlr::read_from_with(vlr, &copc_info))
+            .transpose()
     }
 }
 
@@ -592,10 +597,10 @@ impl<R: Read + Seek> CopcReader<'_, R> {
     /// ```
     pub fn new(mut read: R) -> Result<Self> {
         let header = Header::new(read.by_ref())?;
-        let copc_info = header.copc_info_vlr().ok_or(Error::CopcInfoVlrNotFound)?;
+        let copc_info = header.copc_info_vlr()?.ok_or(Error::CopcInfoVlrNotFound)?;
         let hierarchy = header
-            .copc_hierarchy_evlr()
-            .ok_or(Error::CopcHierarchyEvlrNotFound)??;
+            .copc_hierarchy_evlr()?
+            .ok_or(Error::CopcHierarchyEvlrNotFound)?;
         let hierarchy = hierarchy.iter_entries().collect::<Result<Vec<_>>>()?;
         let hierarchy = hierarchy
             .into_iter()
@@ -840,7 +845,7 @@ mod tests {
     #[test]
     fn test_vlr_copc_autzen() {
         let reader = Reader::from_path("tests/data/autzen.copc.laz").expect("Cannot open reader");
-        let copcinfo = reader.header().copc_info_vlr().unwrap();
+        let copcinfo = reader.header().copc_info_vlr().unwrap().unwrap();
         let copchier = reader.header().copc_hierarchy_evlr().unwrap().unwrap();
         assert!(copcinfo.root_hier_offset == 4336);
         assert!(copcinfo.root_hier_size == 32);
