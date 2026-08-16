@@ -1,6 +1,6 @@
 //! [COPC](https://copc.io/) header data
 
-use crate::{Bounds, PointData, PointDataBuilder, Vector};
+use crate::{Bounds, Error, Header, PointData, PointDataBuilder, Result, Vector, Vlr};
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use laz::record::{LayeredPointRecordDecompressor, RecordDecompressor};
 use std::{
@@ -11,23 +11,13 @@ use std::{
     path::Path,
 };
 
-/// The user id of the Copc VLRs.
-pub const USER_ID: &str = "copc";
-
-/// The description of the Copc VLRs.
-pub const DESCRIPTION: &str = "https://copc.io";
-
-use crate::{Error, Header, Result, Vlr};
-
 /// The COPC Info Vlr.
 ///
 /// Requirements:
 ///
 /// - The info VLR MUST exist.
-/// - The info VLR MUST be the first VLR in the file (must begin at offset 375
-///   from the beginning of the file).
-/// - The info VLR is 160 bytes described by the following structure. reserved
-///   elements MUST be set to 0.
+/// - The info VLR MUST be the first VLR in the file (must begin at offset 375 from the beginning of the file).
+/// - The info VLR is 160 bytes described by the following structure. reserved elements MUST be set to 0.
 #[derive(Clone, Debug)]
 pub struct CopcInfoVlr {
     /// Actual (unscaled) X coordinate of center of octree
@@ -56,6 +46,8 @@ pub struct CopcInfoVlr {
 impl CopcInfoVlr {
     /// The record id of the CopcInfo VLR header.
     pub const RECORD_ID: u16 = 1;
+    /// The user id of the CopcInfo VLR header.
+    pub const USER_ID: &str = "copc";
 
     /// Reads the Vlr data from the source.
     ///
@@ -83,8 +75,7 @@ impl CopcInfoVlr {
 
     /// Writes the Vlr data to the source.
     ///
-    /// This only writes the payload data the vlr header should be written
-    /// before-hand.
+    /// This only writes the payload data
     pub fn write_to<W: Write>(&self, dst: &mut W) -> Result<()> {
         dst.write_f64::<LittleEndian>(self.center_x)?;
         dst.write_f64::<LittleEndian>(self.center_y)?;
@@ -106,7 +97,11 @@ impl TryFrom<&Vlr> for CopcInfoVlr {
     type Error = Error;
 
     fn try_from(value: &Vlr) -> Result<Self> {
-        Self::read_from::<&[u8]>(value.data.as_ref())
+        if value.record_id == Self::RECORD_ID && value.user_id == Self::USER_ID {
+            Self::read_from::<&[u8]>(value.data.as_ref())
+        } else {
+            Err(Error::CopcInfoVlrNotFound)
+        }
     }
 }
 
@@ -167,6 +162,7 @@ impl VoxelKey {
             z: self.z >> 1,
         }
     }
+
     /// Calculates bounds of the VoxelKey.
     /// Serves as a guidance implementation.
     pub fn bounds(&self, copc_info: &CopcInfoVlr) -> Bounds {
@@ -212,7 +208,7 @@ impl VoxelKey {
     };
 
     /// Read a VoxelKey from Vlr Payload data.
-    pub fn read_from<R: Read>(read: &mut R) -> Result<Self> {
+    fn read_from<R: Read>(read: &mut R) -> Result<Self> {
         Ok(Self {
             l: read.read_i32::<LittleEndian>()?,
             x: read.read_i32::<LittleEndian>()?,
@@ -312,19 +308,16 @@ impl Page {
 
 /// The hierarchy VLR MUST exist.
 ///
-/// Like EPT, COPC stores hierarchy information to allow a reader to locate
-/// points that are in a particular octree node. Also like EPT, the hierarchy
-/// MAY be arranged in a tree of pages, but SHALL always consist of at least ONE
-/// hierarchy page.  The VLR data consists of one or more hierarchy pages. Each
-/// hierarchy data page is written as follows:
+/// Like EPT, COPC stores hierarchy information to allow a reader to locate points that are in a particular octree node.
+/// Also like EPT, the hierarchy MAY be arranged in a tree of pages, but SHALL always consist of at least ONE hierarchy page.
+/// The VLR data consists of one or more hierarchy pages. Each hierarchy data page is written as follows:
 ///
-/// VoxelKey corresponds to the naming of EPT data files.  octree hierarchy is
-/// arranged in pages. The COPC VLR provides information describing the location
-/// and size of root hierarchy page. The root hierarchy page can be used to
-/// traverse to child pages. Each entry in a hierarchy page either refers to a
-/// child hierarchy page, octree node data chunk, or an empty octree node. The
-/// size and file offset of each data chunk is provided in the hierarchy
-/// entries, allowing the chunks to be directly read for decoding.
+/// VoxelKey corresponds to the naming of EPT data files.
+/// The octree hierarchy is arranged in pages.
+/// The COPC VLR provides information describing the location and size of root hierarchy page.
+/// The root hierarchy page can be used to traverse to child pages.
+/// Each entry in a hierarchy page either refers to a child hierarchy page, octree node data chunk, or an empty octree node.
+/// The size and file offset of each data chunk is provided in the hierarchy entries, allowing the chunks to be directly read for decoding.
 #[derive(Clone, Debug)]
 pub struct CopcHierarchyVlr {
     root: Page,
@@ -334,6 +327,8 @@ pub struct CopcHierarchyVlr {
 impl CopcHierarchyVlr {
     /// The record id of the CopcHierarchy VLR header.
     pub const RECORD_ID: u16 = 1000;
+    /// The user id of the CopcHierarchy VLR header.
+    pub const USER_ID: &str = "copc";
 
     /// Writes the Vlr data to the source.
     ///
@@ -348,6 +343,10 @@ impl CopcHierarchyVlr {
 
     /// Reads the CopcHierarchyVlr from the Vlr payload with specifications from copc_info.
     pub fn read_from_with(vlr: &Vlr, copc_info: &CopcInfoVlr) -> Result<CopcHierarchyVlr> {
+        if vlr.record_id != Self::RECORD_ID || vlr.user_id != Self::USER_ID {
+            return Err(Error::CopcHierarchyEvlrNotFound);
+        }
+
         let read_page = |offset: u64, byte_size: u64| {
             let start: usize = offset
                 .checked_sub(copc_info.root_hier_offset)
@@ -475,7 +474,7 @@ impl Vlr {
     /// assert!(&vlr.is_copc_info());
     /// ```
     pub fn is_copc_info(&self) -> bool {
-        self.user_id == USER_ID && self.record_id == CopcInfoVlr::RECORD_ID
+        self.user_id == CopcInfoVlr::USER_ID && self.record_id == CopcInfoVlr::RECORD_ID
     }
 }
 
@@ -513,7 +512,7 @@ impl Vlr {
     /// assert!(vlr.is_copc_hierarchy());
     /// ```
     pub fn is_copc_hierarchy(&self) -> bool {
-        self.user_id == USER_ID && self.record_id == CopcHierarchyVlr::RECORD_ID
+        self.user_id == CopcHierarchyVlr::USER_ID && self.record_id == CopcHierarchyVlr::RECORD_ID
     }
 }
 
@@ -888,6 +887,8 @@ mod tests {
             .unwrap();
         let vlr = Vlr {
             data,
+            user_id: CopcHierarchyVlr::USER_ID.to_owned(),
+            record_id: CopcHierarchyVlr::RECORD_ID,
             ..Default::default()
         };
         let info = CopcInfoVlr {
