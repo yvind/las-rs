@@ -4,9 +4,8 @@
 //! supports data types 0 through 10; deprecated array types and reserved types
 //! are rejected because their typed layout is not part of this API.
 
-use std::{marker::PhantomData, slice::ChunksExact};
-
 use crate::{Error, Header, Point, PointData, Result, Vlr};
+use std::{marker::PhantomData, slice::ChunksExact};
 
 const NO_DATA_BIT: u8 = 1 << 0;
 const MIN_BIT: u8 = 1 << 1;

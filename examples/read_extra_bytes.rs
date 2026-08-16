@@ -1,5 +1,4 @@
-use las::Reader;
-use las::{ExtraBytesColumn, ExtraBytesVlr};
+use las::{ExtraBytesColumn, ExtraBytesVlr, Reader};
 
 fn main() {
     let path = std::env::args()
