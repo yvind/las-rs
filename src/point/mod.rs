@@ -13,7 +13,6 @@
 //! scale and offset from the header are applied.
 
 mod classification;
-pub mod extra_bytes;
 mod format;
 mod scan_direction;
 
@@ -98,7 +97,7 @@ pub struct Point {
 
     /// This point's extra bytes.
     ///
-    /// These can have structure and meaning, but for now they don't.
+    /// Use [`crate::ExtraBytesVlr`] to interpret them
     pub extra_bytes: Vec<u8>,
 }
 

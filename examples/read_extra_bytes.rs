@@ -1,50 +1,70 @@
-extern crate las;
-
-use las::point::extra_bytes::ExtraBytesReader;
 use las::Reader;
+use las::{ExtraBytesColumn, ExtraBytesVlr};
 
 fn main() {
     let path = std::env::args()
         .nth(1)
         .expect("Must provide a path to a las file");
 
-    let mut reader = Reader::from_path(&path).expect("Unable to open reader");
-    let header = reader.header();
+    let mut reader = Reader::from_path(&path).unwrap();
 
-    // Read the ExtraBytes field definition from the Header
-    let ebr = ExtraBytesReader::new(header);
+    // Parse and validate the Extra Bytes descriptors once.
+    let extra_bytes = ExtraBytesVlr::new(reader.header()).unwrap().unwrap();
+    dbg!(&extra_bytes);
 
-    if ebr.has_extra_bytes() {
-        println!(
-            "LAS file contains ExtraByte attributes, named: {:?}",
-            ebr.names()
-        );
-        println!("Description of fields: {:?}", ebr.descriptions());
+    if !extra_bytes.has_extra_bytes() {
+        println!("LAS file has no Extra Bytes");
+        return;
+    }
 
-        let mut ct = 0;
-        for p in reader.read_all().unwrap().points() {
-            let pt = p.expect("Unable to read point");
-
-            // we can read all extra attributes
-            println!("{:?}", ebr.all_values(&pt));
-
-            // or we can use a vec of strings for which we expect to find extra attributes
-            // (fields with these names should be present in the las header as extra bytes structs)
-            [
-                String::from("range"),
-                String::from("phi"),
-                String::from("time"),
-            ]
-            .iter()
-            .for_each(|name| {
-                println!("{} -> {}", name, ebr.value_for_named_field(name, &pt));
-            });
-
-            // stop reading after 10 points
-            ct += 1;
-            if ct >= 10 {
-                break;
+    // Read the extra bytes column-wise
+    println!("\nThe 10 first values per extra field read columnwise:");
+    let points = reader.read_all().unwrap();
+    for descriptor in extra_bytes.descriptors() {
+        println!("{}: {}", descriptor.name(), descriptor.description());
+        if descriptor.data_type().is_scalar() {
+            match extra_bytes.column(descriptor.name(), &points).unwrap() {
+                ExtraBytesColumn::Unsigned(values) => {
+                    println!("unsigned values: {:?}", values.take(10).collect::<Vec<_>>());
+                }
+                ExtraBytesColumn::Signed(values) => {
+                    println!("signed values: {:?}", values.take(10).collect::<Vec<_>>());
+                }
+                ExtraBytesColumn::Float(values) => {
+                    println!("float values: {:?}", values.take(10).collect::<Vec<_>>());
+                }
+            }
+        } else {
+            let values: Vec<_> = extra_bytes
+                .raw_column(descriptor.name(), &points)
+                .unwrap()
+                .take(10)
+                .collect();
+            println!("raw values: {values:?}");
+        }
+    }
+    // or read them point-wise
+    println!("\nThe same 10 first values per extra field read pointwise:");
+    for point in points.points().map(|p| p.unwrap()).take(10) {
+        for descriptor in extra_bytes.descriptors() {
+            if descriptor.data_type().is_scalar() {
+                let value = extra_bytes
+                    .value_for_named_field(descriptor.name(), &point)
+                    .unwrap();
+                println!("{}: {value:?}", descriptor.name());
+            } else {
+                let value = extra_bytes
+                    .raw_value_for_named_field(descriptor.name(), &point)
+                    .unwrap();
+                println!("(raw) {}: {value:?}", descriptor.name());
             }
         }
+    }
+
+    if extra_bytes.undocumented_bytes_len() > 0 {
+        println!(
+            "{} trailing bytes per point are not described by the VLR",
+            extra_bytes.undocumented_bytes_len()
+        );
     }
 }
