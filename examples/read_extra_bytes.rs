@@ -20,9 +20,14 @@ fn main() {
     println!("\nThe 10 first values per extra field read columnwise:");
     let points = reader.read_all().unwrap();
     for descriptor in extra_bytes.descriptors() {
-        println!("{}: {}", descriptor.name(), descriptor.description());
+        println!(
+            "{}: {} ({:?})",
+            descriptor.name(),
+            descriptor.description(),
+            descriptor.data_type()
+        );
         if descriptor.data_type().is_scalar() {
-            match extra_bytes.column(descriptor.name(), &points).unwrap() {
+            match points.extra_column(descriptor).unwrap().unwrap() {
                 ExtraBytesColumn::Unsigned(values) => {
                     println!("unsigned values: {:?}", values.take(10).collect::<Vec<_>>());
                 }
@@ -34,8 +39,9 @@ fn main() {
                 }
             }
         } else {
-            let values: Vec<_> = extra_bytes
-                .raw_column(descriptor.name(), &points)
+            let values: Vec<_> = points
+                .extra_column_raw(descriptor)
+                .unwrap()
                 .unwrap()
                 .take(10)
                 .collect();
@@ -47,14 +53,10 @@ fn main() {
     for point in points.points().map(|p| p.unwrap()).take(10) {
         for descriptor in extra_bytes.descriptors() {
             if descriptor.data_type().is_scalar() {
-                let value = extra_bytes
-                    .value_for_named_field(descriptor.name(), &point)
-                    .unwrap();
+                let value = point.extra_field(descriptor).unwrap();
                 println!("{}: {value:?}", descriptor.name());
             } else {
-                let value = extra_bytes
-                    .raw_value_for_named_field(descriptor.name(), &point)
-                    .unwrap();
+                let value = point.extra_field_raw(descriptor).unwrap();
                 println!("(raw) {}: {value:?}", descriptor.name());
             }
         }

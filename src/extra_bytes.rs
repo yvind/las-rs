@@ -365,222 +365,196 @@ impl ExtraBytesVlr {
     pub fn undocumented_bytes_len(&self) -> usize {
         self.extra_bytes_len - self.described_bytes_len
     }
+}
 
-    /// Returns a numeric column from a byte slab.
+impl PointData {
+    /// Returns a named extra-bytes numeric column.
     ///
     /// Integer values are widened to `U64` or `I64`. Floating-point values and
     /// values with scale or offset enabled are returned as `F64`.
-    pub fn column<'pointdata, 'vlr>(
-        &'vlr self,
-        name: &str,
-        points: &'pointdata PointData,
-    ) -> Result<ExtraBytesColumn<'pointdata, 'vlr>> {
-        self.ensure_point_data(points)?;
-        let descriptor = self.descriptor_or_error(name)?;
+    pub fn extra_column<'pointdata, 'vlr>(
+        &'pointdata self,
+        descriptor: &'vlr ExtraBytesDescriptor,
+    ) -> Result<Option<ExtraBytesColumn<'pointdata, 'vlr>>> {
         if !descriptor.data_type.is_scalar() {
-            return Err(Error::NonNumericExtraBytesField(name.to_owned()));
+            return Err(Error::NonNumericExtraBytesField(descriptor.name.clone()));
         }
-        let offset = points.record_len() - self.extra_bytes_len + descriptor.byte_offset;
-        let records = points.raw_bytes().chunks_exact(points.record_len());
+        let offset =
+            self.record_len() - self.format().extra_bytes as usize + descriptor.byte_offset;
+        let records = self.raw_bytes().chunks_exact(self.record_len());
         if descriptor.options & (SCALE_BIT | OFFSET_BIT) != 0 {
-            Ok(ExtraBytesColumn::Float(ExtraBytesTypedColumn {
+            Ok(Some(ExtraBytesColumn::Float(ExtraBytesTypedColumn {
                 records,
                 record_field_offset: offset,
                 descriptor,
                 item: PhantomData::<f64>,
-            }))
+            })))
         } else {
             match descriptor.data_type {
                 ExtraBytesDataType::U8
                 | ExtraBytesDataType::U16
                 | ExtraBytesDataType::U32
                 | ExtraBytesDataType::U64 => {
-                    Ok(ExtraBytesColumn::Unsigned(ExtraBytesTypedColumn {
+                    Ok(Some(ExtraBytesColumn::Unsigned(ExtraBytesTypedColumn {
                         records,
                         record_field_offset: offset,
                         descriptor,
                         item: PhantomData::<u64>,
-                    }))
+                    })))
                 }
                 ExtraBytesDataType::I8
                 | ExtraBytesDataType::I16
                 | ExtraBytesDataType::I32
-                | ExtraBytesDataType::I64 => Ok(ExtraBytesColumn::Signed(ExtraBytesTypedColumn {
-                    records,
-                    record_field_offset: offset,
-                    descriptor,
-                    item: PhantomData::<i64>,
-                })),
+                | ExtraBytesDataType::I64 => {
+                    Ok(Some(ExtraBytesColumn::Signed(ExtraBytesTypedColumn {
+                        records,
+                        record_field_offset: offset,
+                        descriptor,
+                        item: PhantomData::<i64>,
+                    })))
+                }
                 ExtraBytesDataType::F32 | ExtraBytesDataType::F64 => {
-                    Ok(ExtraBytesColumn::Float(ExtraBytesTypedColumn {
+                    Ok(Some(ExtraBytesColumn::Float(ExtraBytesTypedColumn {
                         records,
                         record_field_offset: offset,
                         descriptor,
                         item: PhantomData::<f64>,
-                    }))
+                    })))
                 }
                 ExtraBytesDataType::Undocumented
                 | ExtraBytesDataType::Deprecated(_)
                 | ExtraBytesDataType::Reserved(_) => {
-                    Err(Error::NonNumericExtraBytesField(name.to_owned()))
+                    Err(Error::NonNumericExtraBytesField(descriptor.name.clone()))
                 }
             }
         }
     }
 
     /// Returns a typed nullable column, mapping raw no-data values to `None`.
-    pub fn nullable_column<'pointdata, 'vlr>(
-        &'vlr self,
-        name: &str,
-        points: &'pointdata PointData,
-    ) -> Result<ExtraBytesNullableColumn<'pointdata, 'vlr>> {
-        self.ensure_point_data(points)?;
-        let descriptor = self.descriptor_or_error(name)?;
+    pub fn extra_column_nullable<'pointdata, 'vlr>(
+        &'pointdata self,
+        descriptor: &'vlr ExtraBytesDescriptor,
+    ) -> Result<Option<ExtraBytesNullableColumn<'pointdata, 'vlr>>> {
         if !descriptor.data_type.is_scalar() {
-            return Err(Error::NonNumericExtraBytesField(name.to_owned()));
+            return Err(Error::NonNumericExtraBytesField(descriptor.name.to_owned()));
         }
-        let offset = points.record_len() - self.extra_bytes_len + descriptor.byte_offset;
-        let records = points.raw_bytes().chunks_exact(points.record_len());
+        let offset =
+            self.record_len() - self.format().extra_bytes as usize + descriptor.byte_offset;
+        let records = self.raw_bytes().chunks_exact(self.record_len());
         if descriptor.options & (SCALE_BIT | OFFSET_BIT) != 0 {
-            Ok(ExtraBytesNullableColumn::Float(
+            Ok(Some(ExtraBytesNullableColumn::Float(
                 ExtraBytesTypedNullableColumn {
                     records,
                     record_field_offset: offset,
                     descriptor,
                     item: PhantomData,
                 },
-            ))
+            )))
         } else {
             match descriptor.data_type {
                 ExtraBytesDataType::U8
                 | ExtraBytesDataType::U16
                 | ExtraBytesDataType::U32
-                | ExtraBytesDataType::U64 => Ok(ExtraBytesNullableColumn::Unsigned(
+                | ExtraBytesDataType::U64 => Ok(Some(ExtraBytesNullableColumn::Unsigned(
                     ExtraBytesTypedNullableColumn {
                         records,
                         record_field_offset: offset,
                         descriptor,
                         item: PhantomData,
                     },
-                )),
+                ))),
                 ExtraBytesDataType::I8
                 | ExtraBytesDataType::I16
                 | ExtraBytesDataType::I32
-                | ExtraBytesDataType::I64 => Ok(ExtraBytesNullableColumn::Signed(
+                | ExtraBytesDataType::I64 => Ok(Some(ExtraBytesNullableColumn::Signed(
                     ExtraBytesTypedNullableColumn {
                         records,
                         record_field_offset: offset,
                         descriptor,
                         item: PhantomData,
                     },
-                )),
-                ExtraBytesDataType::F32 | ExtraBytesDataType::F64 => Ok(
+                ))),
+                ExtraBytesDataType::F32 | ExtraBytesDataType::F64 => Ok(Some(
                     ExtraBytesNullableColumn::Float(ExtraBytesTypedNullableColumn {
                         records,
                         record_field_offset: offset,
                         descriptor,
                         item: PhantomData,
                     }),
-                ),
+                )),
                 ExtraBytesDataType::Undocumented
                 | ExtraBytesDataType::Deprecated(_)
                 | ExtraBytesDataType::Reserved(_) => {
-                    Err(Error::NonNumericExtraBytesField(name.to_owned()))
+                    Err(Error::NonNumericExtraBytesField(descriptor.name.to_owned()))
                 }
             }
         }
     }
 
     /// Returns the raw bytes for a named descriptor.
-    pub fn raw_column<'a>(
-        &self,
-        name: &str,
-        points: &'a PointData,
-    ) -> Result<ExtraBytesRawColumn<'a>> {
-        self.ensure_point_data(points)?;
-        let descriptor = self.descriptor_or_error(name)?;
-        let offset = points.record_len() - self.extra_bytes_len + descriptor.byte_offset;
-        Ok(ExtraBytesRawColumn {
-            records: points.raw_bytes().chunks_exact(points.record_len()),
+    pub fn extra_column_raw<'pointdata>(
+        &'pointdata self,
+        descriptor: &ExtraBytesDescriptor,
+    ) -> Result<Option<ExtraBytesRawColumn<'pointdata>>> {
+        let offset =
+            self.record_len() - self.format().extra_bytes as usize + descriptor.byte_offset;
+        Ok(Some(ExtraBytesRawColumn {
+            records: self.raw_bytes().chunks_exact(self.record_len()),
             record_field_offset: offset,
             byte_size: descriptor.byte_size,
-        })
+        }))
     }
 
     /// Returns undescribed trailing bytes for every point.
-    pub fn undocumented_column<'a>(
-        &self,
-        points: &'a PointData,
-    ) -> Result<Option<ExtraBytesRawColumn<'a>>> {
-        self.ensure_point_data(points)?;
-        let size = self.undocumented_bytes_len();
+    pub fn extra_column_undocumented<'pointdata>(
+        &'pointdata self,
+        vlr: &ExtraBytesVlr,
+    ) -> Option<ExtraBytesRawColumn<'pointdata>> {
+        let size = vlr.undocumented_bytes_len();
         if size == 0 {
-            return Ok(None);
+            return None;
         }
-        let offset = points.record_len() - self.extra_bytes_len + self.described_bytes_len;
-        Ok(Some(ExtraBytesRawColumn {
-            records: points.raw_bytes().chunks_exact(points.record_len()),
+        let offset =
+            self.record_len() - self.format().extra_bytes as usize + vlr.described_bytes_len;
+        Some(ExtraBytesRawColumn {
+            records: self.raw_bytes().chunks_exact(self.record_len()),
             record_field_offset: offset,
             byte_size: size,
-        }))
+        })
     }
+}
 
-    /// Returns numeric Extra Bytes values from an owned point in descriptor order.
-    pub fn values(&self, point: &Point) -> Result<impl Iterator<Item = Result<ExtraBytesValue>>> {
-        self.ensure_point(point)?;
-        Ok(self.descriptors.iter().map(|descriptor| {
-            let range = descriptor.byte_offset..descriptor.byte_offset + descriptor.byte_size;
-            descriptor
-                .decode(&point.extra_bytes[range])
-                .ok_or_else(|| Error::NonNumericExtraBytesField(descriptor.name.clone()))
-        }))
-    }
-
+impl Point {
     /// Returns one numeric Extra Bytes value from an owned point.
-    pub fn value_for_named_field(&self, name: &str, point: &Point) -> Result<ExtraBytesValue> {
-        self.ensure_point(point)?;
-        let descriptor = self.descriptor_or_error(name)?;
+    pub fn extra_field(&self, descriptor: &ExtraBytesDescriptor) -> Result<ExtraBytesValue> {
         let range = descriptor.byte_offset..descriptor.byte_offset + descriptor.byte_size;
+        if range.end > self.extra_bytes.len() {
+            return Err(Error::PointExtraBytesMismatch(
+                self.extra_bytes.len(),
+                range.len(),
+            ));
+        }
         descriptor
-            .decode(&point.extra_bytes[range])
-            .ok_or_else(|| Error::NonNumericExtraBytesField(name.to_owned()))
+            .decode(&self.extra_bytes[range])
+            .ok_or_else(|| Error::NonNumericExtraBytesField(descriptor.name.to_owned()))
     }
 
     /// Returns the raw bytes for a named field from a borrowed point.
     ///
     /// The returned slice has the descriptor's on-disk width. It is not
     /// decoded, and scale and offset are not applied.
-    pub fn raw_value_for_named_field<'a>(&self, name: &str, point: &'a Point) -> Result<&'a [u8]> {
-        self.ensure_point(point)?;
-        let descriptor = self.descriptor_or_error(name)?;
+    pub fn extra_field_raw<'point>(
+        &'point self,
+        descriptor: &ExtraBytesDescriptor,
+    ) -> Result<&'point [u8]> {
         let range = descriptor.byte_offset..descriptor.byte_offset + descriptor.byte_size;
-        Ok(&point.extra_bytes[range])
-    }
-
-    fn ensure_point_data(&self, points: &PointData) -> Result<()> {
-        let actual = usize::from(points.format().extra_bytes);
-        if actual == self.extra_bytes_len {
-            Ok(())
-        } else {
-            Err(Error::PointDataExtraBytesMismatch(
-                self.extra_bytes_len,
-                actual,
-            ))
+        if range.end > self.extra_bytes.len() {
+            return Err(Error::PointExtraBytesMismatch(
+                self.extra_bytes.len(),
+                range.len(),
+            ));
         }
-    }
-
-    fn ensure_point(&self, point: &Point) -> Result<()> {
-        let actual = point.extra_bytes.len();
-        if actual == self.extra_bytes_len {
-            Ok(())
-        } else {
-            Err(Error::PointExtraBytesMismatch(self.extra_bytes_len, actual))
-        }
-    }
-
-    fn descriptor_or_error(&self, name: &str) -> Result<&ExtraBytesDescriptor> {
-        self.descriptor(name)
-            .ok_or_else(|| Error::ExtraBytesFieldNotFound(name.to_owned()))
+        Ok(&self.extra_bytes[range])
     }
 }
 
@@ -950,15 +924,6 @@ mod tests {
             .expect("point data")
     }
 
-    fn extra_bytes_with_descriptor(mut descriptor: ExtraBytesDescriptor) -> ExtraBytesVlr {
-        descriptor.name = "value".to_owned();
-        ExtraBytesVlr {
-            descriptors: vec![descriptor],
-            extra_bytes_len: 2,
-            described_bytes_len: 2,
-        }
-    }
-
     #[test]
     fn unsigned_metadata_stays_upcast() {
         let descriptor = descriptor_with_metadata(
@@ -1039,10 +1004,14 @@ mod tests {
     fn column_selects_one_primitive_iterator_type() {
         let descriptor =
             descriptor_with_metadata(ExtraBytesDataType::U16.code(), 0, [0; 8], [0; 8], [0; 8]);
-        let extra_bytes = extra_bytes_with_descriptor(descriptor);
+
         let points = point_data_with_u16(&[12, 34]);
 
-        match extra_bytes.column("value", &points).expect("column") {
+        match points
+            .extra_column(&descriptor)
+            .expect("column")
+            .expect("field exists")
+        {
             ExtraBytesColumn::Unsigned(values) => {
                 assert_eq!(values.collect::<Vec<_>>(), vec![12_u64, 34]);
             }
@@ -1063,10 +1032,13 @@ mod tests {
         );
         descriptor.scale = 0.5;
         descriptor.offset = 10.0;
-        let extra_bytes = extra_bytes_with_descriptor(descriptor);
         let points = point_data_with_u16(&[20, 40]);
 
-        match extra_bytes.column("value", &points).expect("column") {
+        match points
+            .extra_column(&descriptor)
+            .expect("column")
+            .expect("field exists")
+        {
             ExtraBytesColumn::Float(values) => {
                 assert_eq!(values.collect::<Vec<_>>(), vec![20.0_f64, 30.0]);
             }
@@ -1085,12 +1057,12 @@ mod tests {
             [0; 8],
             [0; 8],
         );
-        let extra_bytes = extra_bytes_with_descriptor(descriptor);
         let points = point_data_with_u16(&[0, 7]);
 
-        match extra_bytes
-            .nullable_column("value", &points)
+        match points
+            .extra_column_nullable(&descriptor)
             .expect("nullable column")
+            .expect("field exists")
         {
             ExtraBytesNullableColumn::Unsigned(values) => {
                 assert_eq!(values.collect::<Vec<_>>(), vec![None, Some(7_u64)]);
@@ -1106,19 +1078,12 @@ mod tests {
         let mut descriptor =
             descriptor_with_metadata(ExtraBytesDataType::U16.code(), 0, [0; 8], [0; 8], [0; 8]);
         descriptor.name = "temperature".to_owned();
-        let extra_bytes = ExtraBytesVlr {
-            descriptors: vec![descriptor],
-            extra_bytes_len: 2,
-            described_bytes_len: 2,
-        };
         let point = Point {
             extra_bytes: vec![0x34, 0x12],
             ..Point::default()
         };
 
-        let raw = extra_bytes
-            .raw_value_for_named_field("temperature", &point)
-            .expect("named raw value");
+        let raw = point.extra_field_raw(&descriptor).expect("named raw value");
         assert_eq!(raw, &[0x34, 0x12]);
         assert_eq!(raw.as_ptr(), point.extra_bytes.as_ptr());
     }
